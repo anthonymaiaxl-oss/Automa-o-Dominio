@@ -35,7 +35,13 @@ empresa de teste).
 
 ## Instalação
 
+Clonando pela primeira vez (repositório:
+`anthonymaiaxl-oss/Automa-o-Dominio`, branch `claude/consegue-ler-j31hef`
+— é a branch que tem o código, não a `main`):
+
 ```bash
+git clone -b claude/consegue-ler-j31hef https://github.com/anthonymaiaxl-oss/Automa-o-Dominio.git
+cd Automa-o-Dominio
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
