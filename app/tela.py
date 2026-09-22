@@ -94,6 +94,15 @@ def achar_texto(imagem, alvo, escala=1, debug=False, max_palavras=4):
     return None
 
 
+def ler_texto(imagem, escala=2):
+    """Lê todo o texto de `imagem` (normalmente um recorte pequeno, ex.:
+    uma caixa de erro) e devolve como string — usado pra decidir o que
+    fazer com uma caixa de erro (`app/erros.py`, seção 0.32). Mesmo
+    pré-processamento de `achar_texto()` (ampliar + tons de cinza)."""
+    imagem_ocr = _preparar_para_ocr(imagem, escala) if escala > 1 else imagem
+    return pytesseract.image_to_string(imagem_ocr, lang="por")
+
+
 def achar_texto_ou_no_centro(imagem, alvo, escala=1, debug=False, max_palavras=4):
     """Acha `alvo` na imagem inteira; se não achar, tenta de novo só na
     região central (`recortar_centro()`) antes de desistir.

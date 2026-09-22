@@ -1,4 +1,14 @@
-# Domínio Automation Engine — handoff (22/09/2026)
+# Domínio Automation Engine — handoff (22/09/2026, atualizado)
+
+> **Nota de 22/09/2026 (mesma data, sessão seguinte):** o projeto foi
+> movido pra `anthonymaiaxl-oss/Automa-o-Dominio` (público), com fluxo
+> de branch (`claude/...`) em vez de commit direto na `main` — o resto
+> deste documento, escrito pro repositório/fluxo antigos, continua
+> valendo pro resto (arquitetura, achados técnicos, regras de
+> segurança). Adicionado: IA de decisão em caixa de erro desconhecida
+> (`app/erros.py` + `app/ia.py`, seção 0.32 do documento principal) —
+> resumo no fim deste arquivo.
+
 
 Este documento é um resumo de estado pra retomar o trabalho em outra
 sessão/outro assistente, sem precisar reler a conversa inteira. Ele
@@ -204,11 +214,17 @@ coordenada fixa, sempre recalcula pela OCR de cada rodada.
 3. Considerar, só depois do lote está estável, a validação de conteúdo
    da seção 5.7.
 4. Itens de roadmap mencionados mas não iniciados: máquina de estados
-   formal (seção 5.6), classificação de erro desconhecido por IA
-   (seção 5.5 — **regra fixa: só classificação estruturada, nunca ação
-   autônoma da IA, nunca screenshot ou dado real enviado a uma IA**,
-   mesmo padrão do `docauto`), painel/servidor distribuído (adiado de
+   formal (seção 5.6), painel/servidor distribuído (adiado de
    propósito).
+5. **Classificação de erro desconhecido por IA — implementada nesta
+   sessão** (`app/erros.py` + `app/ia.py`, Claude Haiku, seção 0.32 do
+   documento principal), mas **ainda não testada contra o Domínio
+   real** (só teste unitário de lógica pura, mesma limitação de sempre
+   deste ambiente). Falta confirmar: o recorte em volta da caixa
+   "Aviso Empresa" captura o texto inteiro; clicar em "No" por OCR
+   funciona na caixa Sim/Não de verdade; a IA, com chave configurada,
+   classifica um erro nunca visto de forma sensata. Pedir log real
+   assim que possível.
 
 ## Regras de segurança que não podem ser flexibilizadas
 
@@ -218,7 +234,11 @@ coordenada fixa, sempre recalcula pela OCR de cada rodada.
 - **IA/LLM**: uso permitido só pra classificação estruturada de erro
   (texto/estatística anonimizada), nunca decisão autônoma sobre ação
   no Domínio, nunca envio de screenshot ou dado real de cliente pra
-  qualquer IA (seção 5.5).
+  qualquer IA (seção 5.5) — implementado em `app/erros.py`/`app/ia.py`:
+  a IA só escolhe entre 4 ações fixas (`erros.ACOES`), só recebe texto
+  já anonimizado (`erros.anonimizar()`, nunca a imagem da tela), e
+  `data/chave_api.txt`/`data/erros_aprendidos.json`/`data/ia_envios.log`
+  ficam locais (gitignored), nunca sobem pro GitHub.
 - **Operação sempre reversível**: o motor só **gera** (nunca calcula
   do zero, nunca transmite) obrigação, e a validação de conteúdo real
   só deve ser feita sobre competência **já fechada e já entregue no

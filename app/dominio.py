@@ -17,9 +17,23 @@ import datetime
 import time
 from pathlib import Path
 
-from . import empresas, interacao, tela
+from . import empresas, erros, interacao, tela
 
 PASTA_CAPTURAS = Path(__file__).resolve().parent.parent / "capturas"
+
+# Títulos de caixa já vistos contra o Domínio real que sinalizam erro/
+# aviso, não sucesso (seção 0.25/0.32). "Atenção" é o padrão; "Aviso
+# Empresa" tem o código da empresa no resto do título (ex.: "Aviso
+# Empresa: 52") — comparado só pelo prefixo fixo, nunca pelo código.
+TITULOS_ERRO = ("Atenção", "Aviso Empresa")
+
+
+class LoteInterrompido(Exception):
+    """A IA (ou o catálogo de erros conhecidos) decidiu que este erro
+    vai se repetir em toda empresa do lote (ex.: sessão expirada,
+    licença, sistema fora do ar) — não adianta insistir empresa por
+    empresa. `executar_lote()` para o lote inteiro ao ver isso, em vez
+    de só marcar aquela empresa como falha (seção 0.32)."""
 
 
 def salvar(imagem, nome):
@@ -34,7 +48,7 @@ def achar_ou_parar(imagem, alvo, nome_erro, escala=2):
     return pos
 
 
-def esperar_e_achar(alvo, texto_erro="Atenção", escala=2, espera_minima=6, tentativas=90, intervalo=2):
+def esperar_e_achar(alvo, texto_erro=TITULOS_ERRO, escala=2, espera_minima=6, tentativas=90, intervalo=2):
     """Espera pelo menos `espera_minima` segundos e depois fica
     verificando a tela por estado (a cada `intervalo` segundos, até
     `tentativas` vezes) em vez de confiar num tempo fixo — achado real
@@ -50,11 +64,11 @@ def esperar_e_achar(alvo, texto_erro="Atenção", escala=2, espera_minima=6, ten
     de OCR, é só demorar mais que uma empresa de teste, pequena.
 
     A cada tentativa, também verifica se apareceu uma caixa de erro do
-    Domínio (`texto_erro` — título padrão "Atenção", ex.: "O caminho
-    especificado não é válido.") em vez de insistir pelas `tentativas`
-    inteiras esperando um sucesso que nunca vai chegar — achado real,
-    primeiro erro visto contra dado real (seção 0.25). Passar
-    `texto_erro=None` desliga essa checagem.
+    Domínio (`texto_erro` — um título ou uma tupla de títulos, padrão
+    `TITULOS_ERRO`, ex.: "O caminho especificado não é válido.") em vez
+    de insistir pelas `tentativas` inteiras esperando um sucesso que
+    nunca vai chegar — achado real, primeiro erro visto contra dado
+    real (seção 0.25). Passar `texto_erro=None` desliga essa checagem.
 
     Se não achar `alvo`/`texto_erro` na tela inteira, tenta de novo só
     na região central (`tela.recortar_centro()`) antes de desistir
@@ -80,14 +94,51 @@ def esperar_e_achar(alvo, texto_erro="Atenção", escala=2, espera_minima=6, ten
         pos = tela.achar_texto_ou_no_centro(imagem, alvo, escala=escala, debug=True)
         if pos is not None:
             return imagem, pos, False
-        if texto_erro:
-            pos_erro = tela.achar_texto_ou_no_centro(imagem, texto_erro, escala=escala)
+        titulos = (texto_erro,) if isinstance(texto_erro, str) else (texto_erro or ())
+        for titulo in titulos:
+            pos_erro = tela.achar_texto_ou_no_centro(imagem, titulo, escala=escala)
             if pos_erro is not None:
-                print(f"Achei uma caixa de erro do Domínio ('{texto_erro}') em vez da confirmação.")
+                print(f"Achei uma caixa de erro/aviso do Domínio ('{titulo}') em vez da confirmação.")
                 return imagem, pos_erro, True
         print(f"Ainda não achei '{alvo}' (tentativa {tentativa}/{tentativas}) — esperando mais {intervalo}s...")
         time.sleep(intervalo)
     return None, None, False
+
+
+def _ler_texto_caixa(imagem, pos):
+    """Lê o texto da caixa de erro/aviso encontrada em `pos`, num
+    recorte pequeno ao redor dela (não a tela inteira — mesmo motivo de
+    `recortar_ao_redor` em todo o resto do projeto: menos ruído pro
+    OCR). `raio_y` maior que o padrão porque a caixa (título + ícone +
+    mensagem + botões) é mais alta que larga."""
+    recorte, _, _ = tela.recortar_ao_redor(imagem, *pos, raio_x=260, raio_y=140)
+    return tela.ler_texto(recorte, escala=2)
+
+
+def _fechar_caixa_erro(texto_lido, prefixo=""):
+    """Fecha a caixa de erro/aviso que está na tela agora.
+
+    A maioria é diálogo de um botão só (Enter fecha, mesmo truque da
+    seção 0.13). Uma exceção conhecida (seção 0.32): "Outros dados não
+    digitados! Deseja copiar do último mês digitado?" tem Sim/Não, e o
+    botão em foco na caixa real era "Yes" — Enter apertaria o errado.
+    Pra esses casos, `erros.BOTAO_NAO_PADRAO` guarda o texto do botão
+    certo; acha e clica nele por OCR. Se não achar o botão nomeado,
+    cai pro Enter como último recurso, mesmo arriscando o botão errado
+    — melhor que travar sem fechar a caixa nenhuma."""
+    chave = erros.normalizar(texto_lido)
+    for trecho, botao in erros.BOTAO_NAO_PADRAO.items():
+        if trecho in chave:
+            imagem = tela.capturar_tela()
+            pos_botao = tela.achar_texto_ou_no_centro(imagem, botao, escala=2, debug=True)
+            if pos_botao is not None:
+                print(f"Clicando em '{botao}' (não o botão em foco).")
+                interacao.clicar(*pos_botao)
+                return
+            print(f"Não achei o botão '{botao}' — usando Enter mesmo assim.")
+            salvar(imagem, f"{prefixo}erro_botao_nao_achado.png")
+            break
+    interacao.pressionar_enter()
 
 
 def trocar_empresa(codigo, prefixo=""):
@@ -314,20 +365,42 @@ def gerar_sped(item_menu, texto_confirmacao, prefixo=""):
     print("Aguardando o resultado da geração (verificando por estado)...")
     imagem, ancora_confirm, houve_erro = esperar_e_achar(texto_confirmacao, escala=2)
     if houve_erro:
-        # Domínio mostrou um erro (ex.: caminho de arquivo inválido) em
-        # vez da confirmação de sucesso. Não adianta continuar
-        # esperando por um "sucesso" que não vai aparecer: salva a
-        # evidência, dispensa a caixa de erro (mesmo truque do Enter da
-        # seção 0.13 — é o mesmo tipo de diálogo de um botão só),
-        # fecha a tela de geração (continua aberta atrás do erro) e
-        # devolve False pra quem chamou seguir pra próxima empresa/
-        # documento em vez de travar o lote inteiro.
-        print("O Domínio mostrou uma caixa de erro em vez da confirmação de sucesso.")
+        # Domínio mostrou um erro/aviso (ex.: caminho de arquivo
+        # inválido) em vez da confirmação de sucesso. Não adianta
+        # continuar esperando por um "sucesso" que não vai aparecer:
+        # salva a evidência, lê o texto da caixa (só pra decidir o que
+        # fazer — nunca sai da máquina sem passar por
+        # `erros.anonimizar()` primeiro, seção 5.5/0.32) e decide a
+        # ação com `erros.decidir()` (catálogo conhecido, aprendido, ou
+        # IA como último recurso).
+        print("O Domínio mostrou uma caixa de erro/aviso em vez da confirmação de sucesso.")
         salvar(imagem, f"{prefixo}erro_dominio.png")
-        interacao.pressionar_enter()
+        texto_lido = _ler_texto_caixa(imagem, ancora_confirm)
+        acao = erros.decidir(texto_lido, documento=item_menu)
+
+        _fechar_caixa_erro(texto_lido, prefixo)
         time.sleep(1)
-        _fechar_tela_geracao(item_menu, prefixo, pos_fechar_conhecido)
-        return False
+
+        if acao == erros.CONTINUAR:
+            # Só um aviso informativo — a caixa já fechou, a geração
+            # deve seguir sozinha. Volta a esperar pela confirmação de
+            # verdade, sem reabrir nada.
+            print("Aviso dispensado — voltando a esperar a confirmação de sucesso.")
+            imagem, ancora_confirm, houve_erro_de_novo = esperar_e_achar(texto_confirmacao, escala=2)
+            if houve_erro_de_novo or ancora_confirm is None:
+                print("Depois do aviso, ainda não veio a confirmação de sucesso. Parando este documento.")
+                salvar(tela.capturar_tela(), f"{prefixo}erro_apos_aviso.png")
+                _fechar_tela_geracao(item_menu, prefixo, pos_fechar_conhecido)
+                return False
+            # segue o fluxo normal a partir daqui, como se tivesse achado de primeira
+        else:
+            _fechar_tela_geracao(item_menu, prefixo, pos_fechar_conhecido)
+            if acao == erros.PARAR_LOTE:
+                raise LoteInterrompido(texto_lido)
+            if acao == erros.TENTAR_DE_NOVO and not prefixo.endswith("retry_"):
+                print("Tentando gerar este documento mais uma vez.")
+                return gerar_sped(item_menu, texto_confirmacao, prefixo=f"{prefixo}retry_")
+            return False
     if ancora_confirm is None:
         print(f"Não achei a confirmação ('{texto_confirmacao}') depois de esperar. Deu erro na geração?")
         salvar(tela.capturar_tela(), f"{prefixo}erro_confirmacao.png")
@@ -627,6 +700,7 @@ def executar_lote(usar_real=False):
         # seção 0.20) — gera cada um, com falha isolada por documento
         # (um documento falhar não impede tentar o outro).
         status_documentos = {}
+        parar_tudo = False
         for documento in empresas.documentos_necessarios(e):
             print(f"\n--- {documento} ---")
             prefixo = f"{prefixo_empresa}{documento}_"
@@ -634,10 +708,29 @@ def executar_lote(usar_real=False):
             if gerador is None:
                 status_documentos[documento] = "documento desconhecido"
                 continue
-            status_documentos[documento] = "sucesso" if gerador(prefixo=prefixo) else "falha na geração"
+            try:
+                status_documentos[documento] = "sucesso" if gerador(prefixo=prefixo) else "falha na geração"
+            except LoteInterrompido as erro:
+                # A IA (ou o catálogo de erros conhecidos) decidiu que
+                # este erro vai se repetir em toda empresa — parar o
+                # lote inteiro agora, em vez de gastar tempo tentando
+                # empresa por empresa contra o mesmo problema (seção
+                # 0.32).
+                print(f"\nParando o lote inteiro: {erro}")
+                status_documentos[documento] = "lote interrompido"
+                parar_tudo = True
+                break
         resultados.append((e, status_documentos))
+        if parar_tudo:
+            break
 
     print("\n=== Resumo ===")
+    if erros.decisoes_da_sessao:
+        print("\nDecisões tomadas em caixas de erro/aviso durante este lote:")
+        for documento, texto, acao, origem in erros.decisoes_da_sessao:
+            resumo = texto.splitlines()[0] if texto else "(sem texto)"
+            print(f"  [{documento}] \"{resumo}\" → {acao} ({origem})")
+
     houve_falha = False
     for e, status_documentos in resultados:
         detalhes = ", ".join(f"{doc}: {status}" for doc, status in status_documentos.items())

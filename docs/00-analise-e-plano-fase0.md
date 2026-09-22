@@ -1421,6 +1421,106 @@ por OCR no caso comum — só recorre a isso como reforço.
 
 **Ainda não testado de ponta a ponta.**
 
+### 0.32 IA de decisão em caixa de erro/aviso desconhecida (`app/erros.py` + `app/ia.py`)
+
+Até aqui, toda caixa de erro/aviso do Domínio (título "Atenção", seção
+0.25) tinha um único destino: salvar print, apertar Enter, fechar a
+tela, marcar falha — mesmo quando a mensagem era só um aviso
+informativo que não devia impedir a geração. Pedido do usuário:
+adicionar uma IA leve (Claude Haiku) que decide o que fazer com uma
+caixa **nunca vista antes**, mas só entre um conjunto fixo de ações —
+nunca com liberdade de clicar/digitar o que quiser — e **sem nunca ver
+a tela**: só o texto da caixa, lido por OCR localmente e anonimizado
+antes de sair da máquina.
+
+**Fluxo (`app/erros.py`, `app/ia.py`):**
+
+1. `esperar_e_achar()` agora reconhece dois títulos de caixa
+   (`TITULOS_ERRO = ("Atenção", "Aviso Empresa")`), não só "Atenção" —
+   achado real (prints `52_CONTRIBUICOES_erro_dominio.png`,
+   `52_CONTRIBUICOES_depois_fechar.png`): o Domínio também mostra
+   aviso com o título "Aviso Empresa: <código>" (ex.: "Saldo dos
+   impostos não foram calculados no período: 08/2026"), estrutura
+   diferente da caixa "Atenção" de erro de verdade, e que o código
+   antigo não reconhecia (caía no caminho genérico de timeout).
+2. Ao achar uma dessas caixas, `gerar_sped()` lê o texto dela por OCR
+   num recorte pequeno ao redor (`app.dominio._ler_texto_caixa()`,
+   reaproveita `tela.recortar_ao_redor()` — nunca a tela inteira) e
+   manda pra `erros.decidir()`.
+3. `erros.decidir()` **sempre** anonimiza o texto primeiro
+   (`erros.anonimizar()`): número (CNPJ/CPF/data/valor/código) vira
+   `#`; caminho de arquivo vira `<CAMINHO>`; e-mail vira `<EMAIL>`;
+   sequência de palavra em MAIÚSCULO que não é sigla fiscal conhecida
+   (`_SIGLAS_PERMITIDAS`, ex.: SPED/ICMS/CNPJ) vira `<NOME>` — cobre
+   tanto o nome da empresa quanto qualquer outro nome próprio que
+   apareça em letra maiúscula (padrão comum em caixa de sistema
+   corporativo). Só depois disso o texto é comparado/guardado/enviado.
+4. Procura o texto anonimizado (comparado sem acento/maiúscula) em
+   dois catálogos, nessa ordem: `ERROS_CONHECIDOS` (fixo, versionado,
+   decisão de gente — hoje tem os três erros já vistos contra dado
+   real: "caminho especificado não é válido" seção 0.25, "outros dados
+   não digitados" e "saldo dos impostos não foram calculados", os dois
+   últimos com a ação decidida pelo usuário nesta sessão) e
+   `data/erros_aprendidos.json` (local, nunca sobe pro GitHub — toda
+   decisão que a IA já tomou antes, current vira regra sem precisar
+   consultar de novo).
+5. Só se for um erro **nunca visto em nenhum dos dois catálogos**,
+   chama `ia.classificar_erro()` (Claude Haiku, `output_config.format`
+   com JSON Schema fechado — a resposta só pode ser uma das 4 ações
+   mais confiança mais motivo, nunca texto livre). Confiança "baixa"
+   nunca vira regra nova e sempre cai em `PULAR` (comportamento seguro
+   de antes) — só confiança "alta" é gravada em
+   `data/erros_aprendidos.json`.
+6. Sem chave de API configurada (`data/chave_api.txt` — opção 6 do
+   menu, ou variável `ANTHROPIC_API_KEY`) ou sem internet, cai
+   automaticamente em `PULAR` sem travar o motor — a IA é reforço
+   opcional, nunca dependência.
+
+**As 4 ações possíveis** (`erros.ACOES`, sempre reversíveis — nenhuma
+altera lançamento nem transmite, mesma regra da seção 5.7):
+
+- `PULAR` — fecha a caixa e a tela de geração, marca falha naquele
+  documento, segue pra próxima empresa (comportamento de sempre).
+- `TENTAR_DE_NOVO` — fecha e tenta gerar o mesmo documento mais uma
+  vez (só uma vez — `gerar_sped()` usa o prefixo `..._retry_` pra não
+  entrar num loop).
+- `CONTINUAR` — só fecha a caixa (aviso informativo) e volta a esperar
+  a confirmação de sucesso de verdade, sem reabrir nada.
+- `PARAR_LOTE` — fecha tudo e para o **lote inteiro**
+  (`LoteInterrompido`, nova exceção que `executar_lote()` captura) —
+  pra erro que vai se repetir em toda empresa (sessão expirada,
+  licença, sistema fora do ar).
+
+**Botão errado por padrão, achado real:** a caixa "Outros dados não
+digitados! Deseja copiar do último mês digitado?" (print
+`52_CONTRIBUICOES_erro_dominio.png`) tem Sim/Não, com **"Yes" em
+foco** — usar o mesmo truque de Enter dos diálogos de um botão só
+apertaria o botão errado. `erros.BOTAO_NAO_PADRAO` guarda, por texto
+conhecido da caixa, qual botão clicar por OCR em vez de usar Enter
+(`dominio._fechar_caixa_erro()`).
+
+**Decisão do usuário pros dois avisos já vistos** (não são erro do
+motor, são decisão de negócio): "Outros dados não digitados" → nunca
+copiar do mês anterior sozinho, responder "Não" e pular a empresa pra
+revisão manual. "Saldo dos impostos não foram calculados" → apertar OK
+mas não considerar a geração válida sem a apuração feita, pular a
+empresa também. As duas já estão em `ERROS_CONHECIDOS` — não dependem
+da IA.
+
+**Resumo do lote** agora lista, no final, toda decisão tomada em caixa
+de erro/aviso durante aquela rodada (`erros.decisoes_da_sessao`) — pra
+quem está acompanhando ver de relance sem abrir print nenhum.
+
+**Ainda não testado de ponta a ponta contra o Domínio real** — os dois
+títulos de caixa (`TITULOS_ERRO`) e a anonimização foram validados por
+teste unitário de lógica pura (sem OCR/tela real, mesma limitação da
+seção "ambiente de desenvolvimento" no topo deste documento); falta
+confirmar contra uma caixa de verdade que: (a) o recorte
+`recortar_ao_redor()` captura o texto inteiro da caixa "Aviso Empresa"
+sem cortar; (b) clicar em "No" por OCR funciona na caixa Sim/Não real;
+(c) a chamada à IA de verdade, com chave configurada, classifica um
+erro nunca visto de forma sensata.
+
 ---
 
 ## 1. Análise do projeto

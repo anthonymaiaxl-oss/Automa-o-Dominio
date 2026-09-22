@@ -89,12 +89,28 @@ python scripts\executar_lote.py --real   # idem, mas com data/empresas.csv (plan
 `explorar.py` navega Relatórios → Informativos → Federais → SPED
 Fiscal, clica OK, confirma o aviso "Final da exportação." e fecha a
 tela — salvando cada etapa em `capturas/` (pasta local, nunca
-versionada — pode conter tela real com dado fiscal). Já reconhece uma
-caixa de erro do Domínio (título "Atenção", ex.: caminho de arquivo
-inválido — seção 0.25 do documento): salva print, dispensa a caixa e
-para aquele documento sem travar o lote. Só cobre esse formato de erro
-visto até agora — outro título de erro ainda cai no caminho antigo
-(espera e falha por timeout, sem mensagem específica).
+versionada — pode conter tela real com dado fiscal). Já reconhece
+caixa de erro/aviso do Domínio (títulos "Atenção" e "Aviso Empresa" —
+seção 0.25/0.32 do documento): salva print, decide o que fazer
+(`app/erros.py`) e segue sem travar o lote.
+
+### IA de decisão em erro desconhecido (opcional)
+
+Quando aparece uma caixa de erro/aviso do Domínio que o motor nunca
+viu, ele consulta uma IA leve (Claude Haiku) pra decidir entre um
+conjunto fixo de ações (pular a empresa, tentar de novo, só continuar,
+ou parar o lote inteiro) — nunca uma ação livre. **A IA nunca vê a
+tela**: recebe só o texto da caixa, lido por OCR na sua própria máquina
+e anonimizado antes de sair dela (número, caminho de arquivo, e-mail e
+nome em maiúsculo viram marcador genérico — `docs/00-analise-e-plano-fase0.md`,
+seção 0.32). Toda decisão da IA vira regra local
+(`data/erros_aprendidos.json`, nunca sobe pro GitHub) — o mesmo erro
+não consulta a IA de novo.
+
+Sem chave configurada, o motor simplesmente pula essa empresa (mesmo
+comportamento de sempre, sem IA nenhuma). Pra configurar: opção 6 do
+menu, ou salve a chave em `data/chave_api.txt` (uma linha só). Chave
+grátis/paga em <https://console.anthropic.com/settings/keys>.
 
 - `app/tela.py` — captura de tela, recorte e leitura de texto (OCR),
   com os ajustes já validados (recorte por região, pré-processamento
@@ -106,6 +122,11 @@ visto até agora — outro título de erro ainda cai no caminho antigo
   `gerar_sped_fiscal()`), reaproveitadas pelos scripts isolados e pelo
   lote.
 - `app/empresas.py` — carrega e filtra `data/empresas.csv` por regime.
+- `app/erros.py` — decide o que fazer com uma caixa de erro/aviso:
+  anonimiza o texto, procura no catálogo conhecido/aprendido e, se
+  precisar, consulta `app/ia.py`.
+- `app/ia.py` — chamada à API da Anthropic (Claude Haiku), só com
+  texto anonimizado, resposta restrita a uma lista fechada de ações.
 - `scripts/explorar.py` — gera o SPED Fiscal numa empresa só (a que já
   estiver selecionada no Domínio).
 - `scripts/trocar_empresa.py` — troca a empresa selecionada via F8.
