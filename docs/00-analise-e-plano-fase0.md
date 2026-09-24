@@ -1521,6 +1521,33 @@ sem cortar; (b) clicar em "No" por OCR funciona na caixa Sim/Não real;
 (c) a chamada à IA de verdade, com chave configurada, classifica um
 erro nunca visto de forma sensata.
 
+### 0.33 Instalação nova: Tesseract não achado mesmo instalado ("not in your PATH")
+
+Primeiro `pip install -r requirements.txt` numa máquina/pasta nova
+(clone do zero, seção 0.32 "nota" no `HANDOFF.md`): depois de instalar
+o Tesseract, `pytesseract.image_to_data()` falhava com "tesseract is
+not installed or it's not in your PATH" mesmo com o Tesseract já
+instalado. O instalador oficial do Windows às vezes não marca sozinho
+a caixa "Add to PATH", ou marca mas um Prompt de Comando já aberto
+antes da instalação não pega o PATH novo (só janela aberta depois).
+
+**Correção:** `app/tela.py` agora tenta achar o `tesseract.exe`
+sozinho, sem depender só do PATH — primeiro tenta o jeito normal
+(`shutil.which`), e se não achar, tenta os dois caminhos onde o
+instalador oficial do Windows coloca por padrão (`Program Files` e
+`Program Files (x86)`), configurando `pytesseract.pytesseract.tesseract_cmd`
+diretamente se achar um dos dois. Resolve o caso comum sem o usuário
+precisar mexer em variável de ambiente — só não resolve se o Tesseract
+foi instalado num caminho customizado, aí ainda precisa adicionar ao
+PATH manualmente ou abrir uma issue/pedir ajuste no código com o
+caminho real.
+
+**Ainda não confirmado que resolveu** — validado só por leitura do
+código (a lógica de fallback está correta: se `shutil.which` achar,
+não mexe em nada; se não achar, testa os dois caminhos fixos antes de
+desistir), não testado contra uma instalação real com Tesseract fora
+do PATH.
+
 ---
 
 ## 1. Análise do projeto

@@ -15,6 +15,8 @@ suposição:
 """
 
 import ctypes
+import os
+import shutil
 from pathlib import Path
 
 from PIL import Image, ImageGrab, ImageOps
@@ -22,6 +24,27 @@ import pytesseract
 from pytesseract import Output
 
 ctypes.windll.user32.SetProcessDPIAware()
+
+# O pytesseract só acha o programa `tesseract.exe` se ele estiver no
+# PATH do Windows — e o instalador oficial às vezes não marca a caixa
+# "Add to PATH" sozinho, ou marca mas o Prompt já estava aberto antes
+# (PATH só atualiza em janela nova). Achado real: motor instalado do
+# zero numa máquina nova, Tesseract instalado, mas
+# `pytesseract.image_to_data()` falhava com "tesseract is not
+# installed or it's not in your PATH" mesmo assim.
+#
+# Em vez de depender só do PATH, procura o `tesseract.exe` primeiro
+# pelo PATH (`shutil.which`, caminho normal) e, se não achar, tenta os
+# dois lugares onde o instalador oficial do Windows coloca por padrão
+# — sem precisar que o usuário mexa em variável de ambiente nenhuma.
+if not shutil.which("tesseract"):
+    for _caminho in (
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    ):
+        if os.path.isfile(_caminho):
+            pytesseract.pytesseract.tesseract_cmd = _caminho
+            break
 
 
 def capturar_tela():
